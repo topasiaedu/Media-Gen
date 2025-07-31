@@ -46,8 +46,8 @@ npm install
 
 2. Fill in your environment variables in `.env`:
    ```env
-   # ModelArk API
-   REACT_APP_ARK_API_KEY=your_ark_api_key_here
+   # Backend API
+   REACT_APP_API_BASE_URL=http://localhost:3001
    
    # Supabase
    REACT_APP_SUPABASE_URL=https://your-project.supabase.co

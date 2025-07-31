@@ -1,10 +1,9 @@
 /**
  * Image Generation API
- * Handles image generation API calls to ModelArk via serverless function and storage to Supabase
+ * Handles image generation API calls to backend server
  */
 
-import { supabase } from "../lib/supabase";
-import type { PromptInsert, ImageInsert } from "../database.types";
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001';
 
 /**
  * Interface for the complete image generation flow
@@ -13,8 +12,6 @@ export interface GenerateImageParams {
   prompt: string;
   model?: string;
   size?: string;
-  guidance_scale?: number;
-  watermark?: boolean;
   userId: string;
 }
 
@@ -31,51 +28,18 @@ export interface GeneratedImageResult {
 
 
 /**
- * Generate image using our serverless function (avoids CORS issues)
+ * Generate image using backend API
  */
 const generateImage = async (params: GenerateImageParams): Promise<GeneratedImageResult> => {
   const {
     prompt,
     model = "seedream-3-0-t2i-250415",
     size = "1024x1024",
-    guidance_scale = 3,
-    watermark = true,
     userId
   } = params;
 
   try {
-    // Step 1: Create prompt record in database
-    const promptData: PromptInsert = {
-      user_id: userId,
-      prompt,
-      model_used: model,
-      type: "image",
-      size,
-      guidance_scale,
-      language: "en"
-    };
-
-    const { data: promptRecord, error: promptError } = await supabase
-      .from("prompts")
-      .insert(promptData)
-      .select()
-      .single();
-
-    if (promptError) {
-      throw new Error(`Failed to create prompt record: ${promptError.message}`);
-    }
-
-    // Step 2: Call our serverless function
-    console.log("Generating image via serverless function...");
-    console.log("Prompt:", prompt);
-    console.log("Model:", model);
-    console.log("Size:", size);
-
-    const apiUrl = process.env.NODE_ENV === 'development' 
-      ? 'http://localhost:3000/api/generate-image'
-      : '/api/generate-image';
-
-    const response = await fetch(apiUrl, {
+    const response = await fetch(`${API_BASE_URL}/api/images/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -84,209 +48,123 @@ const generateImage = async (params: GenerateImageParams): Promise<GeneratedImag
         prompt,
         model,
         size,
-        guidance_scale,
-        watermark
+        userId
       })
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Server error: ${response.status} - ${errorText}`);
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    console.log("API Response:", data);
-
-    // Step 3: Process and save images
-    const savedImages: Array<{
-      id: string;
-      url: string;
-      bucketUrl: string;
-      size: string;
-    }> = [];
-
-    // Check if response has data
-    if (!data.data || data.data.length === 0) {
-      throw new Error("No image data received from API");
-    }
-
-    for (let index = 0; index < data.data.length; index++) {
-      const imageData = data.data[index];
-      
-      if (!imageData.url) {
-        console.warn(`Image ${index} has no URL, skipping`);
-        continue;
-      }
-
-      try {
-        // Download image from ModelArk URL
-        const imageBlob = await downloadImageAsBlob(imageData.url);
-        
-        // Upload to Supabase storage bucket
-        const fileName = `${promptRecord.id}_${index + 1}_${Date.now()}.png`;
-        const bucketUrl = await uploadImageToSupabase(imageBlob, fileName);
-
-        // Save image record to database
-        const imageRecord: ImageInsert = {
-          prompt_id: promptRecord.id,
-          url: imageData.url, // Original ModelArk URL
-          size,
-          file_size: imageBlob.size,
-          mime_type: imageBlob.type || "image/png"
-        };
-
-        const { data: savedImage, error: imageError } = await supabase
-          .from("images")
-          .insert(imageRecord)
-          .select()
-          .single();
-
-        if (imageError) {
-          console.error(`Failed to save image ${index}:`, imageError);
-          continue;
-        }
-
-        savedImages.push({
-          id: savedImage.id,
-          url: imageData.url,
-          bucketUrl,
-          size
-        });
-
-      } catch (imageError) {
-        console.error(`Failed to process image ${index}:`, imageError);
-        // Continue with other images
-      }
-    }
-
-    // Step 4: Validate results
-    if (savedImages.length === 0) {
-      throw new Error("No images were successfully processed and saved");
-    }
-
-    return {
-      promptId: promptRecord.id,
-      images: savedImages
-    };
+    const result = await response.json();
+    return result;
 
   } catch (error) {
     console.error("Image generation failed:", error);
+    
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error('Network error: Unable to connect to the server');
+    }
+    
     throw error instanceof Error ? error : new Error("Unknown error occurred during image generation");
   }
 };
 
 /**
- * Test API connection using our serverless function
+ * Test API connection via backend
  */
 const testApiConnection = async (prompt: string): Promise<{ success: boolean; error?: string; data?: any }> => {
   try {
-    console.log("Testing API connection via serverless function...");
+    console.log("Testing API connection via backend...");
     
-    const apiUrl = process.env.NODE_ENV === 'development' 
-      ? 'http://localhost:3000/api/generate-image'
-      : '/api/generate-image';
-    
-    const response = await fetch(apiUrl, {
+    const response = await fetch(`${API_BASE_URL}/api/images/test`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        prompt: prompt || "A simple test image",
-        model: "seedream-3-0-t2i-250415",
-        size: "1024x1024",
-        guidance_scale: 3,
-        watermark: true
+        prompt: prompt || "A simple test image"
       })
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      return { success: false, error: `Server error: ${response.status} - ${errorText}` };
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      return { success: false, error: errorData.error || `HTTP ${response.status}: ${response.statusText}` };
     }
 
-    const data = await response.json();
-    console.log("Test successful:", data);
+    const result = await response.json();
+    console.log("Test successful:", result);
     
-    // Check if response has data
-    if (!data.data || data.data.length === 0) {
-      return { success: false, error: "No image data received from API" };
-    }
-    
-    return { success: true, data };
+    return { success: true, data: result };
     
   } catch (error) {
     console.error("Test connection error:", error);
+    
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      return { success: false, error: 'Network error: Unable to connect to the server' };
+    }
+    
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 };
 
 /**
- * Download image from URL as Blob
- */
-const downloadImageAsBlob = async (imageUrl: string): Promise<Blob> => {
-  const response = await fetch(imageUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
-  }
-  return await response.blob();
-};
-
-/**
- * Upload image blob to Supabase storage bucket
- */
-const uploadImageToSupabase = async (imageBlob: Blob, fileName: string): Promise<string> => {
-  const { data, error } = await supabase.storage
-    .from("images")
-    .upload(fileName, imageBlob, {
-      contentType: imageBlob.type || "image/png",
-      upsert: false
-    });
-
-  if (error) {
-    throw new Error(`Failed to upload image to storage: ${error.message}`);
-  }
-
-  // Get public URL
-  const { data: publicUrlData } = supabase.storage
-    .from("images")
-    .getPublicUrl(data.path);
-
-  return publicUrlData.publicUrl;
-};
-
-/**
- * Get image from Supabase storage
+ * Get image from backend
  */
 const getImageFromStorage = async (fileName: string): Promise<string> => {
-  const { data } = supabase.storage
-    .from("images")
-    .getPublicUrl(fileName);
-
-  return data.publicUrl;
-};
-
-/**
- * Delete image from Supabase storage
- */
-const deleteImageFromStorage = async (fileName: string): Promise<void> => {
-  const { error } = await supabase.storage
-    .from("images")
-    .remove([fileName]);
-
-  if (error) {
-    throw new Error(`Failed to delete image from storage: ${error.message}`);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/images/storage/${fileName}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get image: ${response.status} ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+    return result.url;
+  } catch (error) {
+    console.error("Failed to get image from storage:", error);
+    throw error instanceof Error ? error : new Error("Unknown error getting image");
   }
 };
 
 /**
- * List available models for image generation
+ * Delete image via backend
  */
-const getAvailableModels = (): string[] => {
-  return [
-    "seedream-3-0-t2i-250415",
-    // Add more models as they become available
-  ];
+const deleteImageFromStorage = async (fileName: string): Promise<void> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/images/storage/${fileName}`, {
+      method: 'DELETE'
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+  } catch (error) {
+    console.error("Failed to delete image from storage:", error);
+    throw error instanceof Error ? error : new Error("Unknown error deleting image");
+  }
+};
+
+/**
+ * Get available models from backend
+ */
+const getAvailableModels = async (): Promise<string[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/images/models`);
+    
+    if (!response.ok) {
+      console.warn("Failed to fetch models from backend, using fallback");
+      return ["seedream-3-0-t2i-250415"]; // Fallback
+    }
+    
+    const result = await response.json();
+    return result.models || ["seedream-3-0-t2i-250415"];
+  } catch (error) {
+    console.warn("Failed to fetch models from backend, using fallback:", error);
+    return ["seedream-3-0-t2i-250415"]; // Fallback
+  }
 };
 
 export const imageApi = {

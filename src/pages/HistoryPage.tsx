@@ -3,8 +3,13 @@
  * User's generation history page
  */
 
-import React, { useState } from "react";
-import { Image, Video, Download, Trash2, Calendar, Filter, Search, Star, Eye } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Image, Video, Download, Trash2, Calendar, Filter, Search } from "lucide-react";
+import { useAuth } from "../hooks/useAuth";
+import { useImage } from "../contexts/ImageContext";
+import { useVideo } from "../contexts/VideoContext";
+import { usePrompt } from "../contexts/PromptContext";
+import type { Image as ImageType, Video as VideoType, Prompt } from "../database.types";
 
 interface GenerationItem {
   id: string;
@@ -18,8 +23,7 @@ interface GenerationItem {
     duration?: number;
     aspectRatio?: string;
   };
-  isFavorite: boolean;
-  downloadCount: number;
+  promptId: string;
 }
 
 /**
@@ -28,134 +32,102 @@ interface GenerationItem {
  */
 export const HistoryPage: React.FC = () => {
   const [filterType, setFilterType] = useState<"all" | "image" | "video">("all");
-  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "popular">("newest");
+  const [sortBy, setSortBy] = useState<"newest" | "oldest">("newest");
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
+  const [generationItems, setGenerationItems] = useState<GenerationItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  
+  // Hooks
+  const { user } = useAuth();
+  const { images, getUserImages, deleteImage, downloadImage } = useImage();
+  const { videos, getUserVideos, deleteVideo, downloadVideo } = useVideo();
+  const { prompts, getUserPrompts } = usePrompt();
 
-  // Enhanced mock data for demonstration
-  const [mockHistory, setMockHistory] = useState<GenerationItem[]>([
-    {
-      id: "1",
-      type: "image",
-      prompt: "A beautiful sunset over a mountain landscape, photorealistic, detailed, golden hour lighting",
-      url: "https://via.placeholder.com/400x400/3b82f6/ffffff?text=Sunset+Mountains",
-      createdAt: "2024-01-15T10:30:00Z",
-      settings: {
-        model: "stable-diffusion-xl",
-        size: "1024x1024"
-      },
-      isFavorite: true,
-      downloadCount: 5
-    },
-    {
-      id: "2", 
-      type: "video",
-      prompt: "A butterfly flying over a field of flowers, slow motion, cinematic, nature documentary style",
-      url: "https://www.w3schools.com/html/mov_bbb.mp4",
-      createdAt: "2024-01-14T15:45:00Z",
-      settings: {
-        model: "seedance-1-0-lite-t2v",
-        duration: 4,
-        aspectRatio: "16:9"
-      },
-      isFavorite: false,
-      downloadCount: 2
-    },
-    {
-      id: "3",
-      type: "image", 
-      prompt: "Abstract digital art with vibrant colors and geometric shapes, modern minimalist design",
-      url: "https://via.placeholder.com/400x400/8b5cf6/ffffff?text=Abstract+Art",
-      createdAt: "2024-01-13T09:15:00Z",
-      settings: {
-        model: "dall-e-3",
-        size: "768x1024"
-      },
-      isFavorite: true,
-      downloadCount: 12
-    },
-    {
-      id: "4",
-      type: "video",
-      prompt: "Ocean waves crashing on a rocky shore during golden hour, peaceful and serene",
-      url: "https://www.w3schools.com/html/mov_bbb.mp4",
-      createdAt: "2024-01-12T14:20:00Z",
-      settings: {
-        model: "runway-gen-2",
-        duration: 6,
-        aspectRatio: "16:9"
-      },
-      isFavorite: false,
-      downloadCount: 8
-    },
-    {
-      id: "5",
-      type: "image",
-      prompt: "Cyberpunk cityscape with neon lights, futuristic architecture, night scene, rain reflections",
-      url: "https://via.placeholder.com/400x400/10b981/ffffff?text=Cyberpunk+City",
-      createdAt: "2024-01-11T16:30:00Z",
-      settings: {
-        model: "midjourney",
-        size: "1024x768"
-      },
-      isFavorite: true,
-      downloadCount: 15
-    },
-    {
-      id: "6",
-      type: "video",
-      prompt: "Time-lapse of a seed growing into a sunflower, nature miracle, educational content",
-      url: "https://www.w3schools.com/html/mov_bbb.mp4",
-      createdAt: "2024-01-10T11:00:00Z",
-      settings: {
-        model: "stable-video",
-        duration: 8,
-        aspectRatio: "9:16"
-      },
-      isFavorite: false,
-      downloadCount: 3
-    },
-    {
-      id: "7",
-      type: "image",
-      prompt: "Mystical forest with glowing mushrooms and fireflies, fantasy art style, magical atmosphere",
-      url: "https://via.placeholder.com/400x400/f59e0b/ffffff?text=Mystical+Forest",
-      createdAt: "2024-01-09T20:15:00Z",
-      settings: {
-        model: "stable-diffusion-xl",
-        size: "1024x1024"
-      },
-      isFavorite: true,
-      downloadCount: 7
-    },
-    {
-      id: "8",
-      type: "image",
-      prompt: "Minimalist modern architecture, white concrete, geometric shapes, natural lighting",
-      url: "https://via.placeholder.com/400x400/6b7280/ffffff?text=Modern+Architecture",
-      createdAt: "2024-01-08T13:45:00Z",
-      settings: {
-        model: "dall-e-3",
-        size: "1024x768"
-      },
-      isFavorite: false,
-      downloadCount: 4
-    }
-  ]);
+  // Load user's generation history
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!user?.id) {
+        setGenerationItems([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        
+        // Get user's prompts, images, and videos
+        const [userPrompts, userImages, userVideos] = await Promise.all([
+          getUserPrompts(user.id, 100),
+          getUserImages(user.id, 100),
+          getUserVideos(user.id, 100)
+        ]);
+
+        // Create a map of prompts for easy lookup
+        const promptMap = new Map(userPrompts.map(p => [p.id, p]));
+
+        // Combine images and videos into generation items
+        const items: GenerationItem[] = [];
+
+        // Add images
+        userImages.forEach(image => {
+          const prompt = promptMap.get(image.prompt_id);
+          if (prompt) {
+            items.push({
+              id: image.id,
+              type: "image",
+              prompt: prompt.prompt,
+              url: image.url,
+              createdAt: image.created_at,
+              settings: {
+                model: prompt.model_used || "unknown",
+                size: image.size
+              },
+              promptId: image.prompt_id
+            });
+          }
+        });
+
+        // Add videos
+        userVideos.forEach(video => {
+          const prompt = promptMap.get(video.prompt_id);
+          if (prompt) {
+            items.push({
+              id: video.id,
+              type: "video",
+              prompt: prompt.prompt,
+              url: video.url || "",
+              createdAt: video.created_at,
+              settings: {
+                model: prompt.model_used || "unknown",
+                duration: video.duration || undefined,
+                aspectRatio: video.aspect_ratio || undefined
+              },
+              promptId: video.prompt_id
+            });
+          }
+        });
+
+        setGenerationItems(items);
+      } catch (error) {
+        console.error("Failed to load history:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadHistory();
+  }, [user?.id, getUserPrompts, getUserImages, getUserVideos]);
 
   /**
    * Filter and sort the history items
    */
-  const filteredHistory = mockHistory
+  const filteredHistory = generationItems
     .filter(item => {
       // Type filter
       if (filterType !== "all" && item.type !== filterType) return false;
       
       // Search filter
       if (searchQuery && !item.prompt.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-      
-      // Favorites filter
-      if (showFavoritesOnly && !item.isFavorite) return false;
       
       return true;
     })
@@ -168,8 +140,6 @@ export const HistoryPage: React.FC = () => {
           return dateB - dateA;
         case "oldest":
           return dateA - dateB;
-        case "popular":
-          return b.downloadCount - a.downloadCount;
         default:
           return dateB - dateA;
       }
@@ -190,37 +160,40 @@ export const HistoryPage: React.FC = () => {
   };
 
   /**
-   * Toggle favorite status
-   */
-  const toggleFavorite = (id: string): void => {
-    setMockHistory(prev => 
-      prev.map(item => 
-        item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
-      )
-    );
-  };
-
-  /**
    * Handle item deletion
    */
-  const handleDelete = (id: string): void => {
-    setMockHistory(prev => prev.filter(item => item.id !== id));
-    console.log("Delete item:", id);
+  const handleDelete = async (item: GenerationItem): Promise<void> => {
+    try {
+      if (item.type === "image") {
+        await deleteImage(item.id);
+      } else {
+        await deleteVideo(item.id);
+      }
+      
+      // Remove from local state
+      setGenerationItems(prev => prev.filter(historyItem => historyItem.id !== item.id));
+    } catch (error) {
+      console.error("Failed to delete item:", error);
+      alert("Failed to delete item. Please try again.");
+    }
   };
 
   /**
    * Handle download
    */
-  const handleDownload = (item: GenerationItem): void => {
-    // Increment download count
-    setMockHistory(prev =>
-      prev.map(historyItem =>
-        historyItem.id === item.id
-          ? { ...historyItem, downloadCount: historyItem.downloadCount + 1 }
-          : historyItem
-      )
-    );
-    console.log("Download item:", item);
+  const handleDownload = async (item: GenerationItem): Promise<void> => {
+    try {
+      const filename = `${item.prompt.slice(0, 30).replace(/[^a-zA-Z0-9\\s]/g, '').replace(/\\s+/g, '_')}_${Date.now()}.${item.type === 'image' ? 'png' : 'mp4'}`;
+      
+      if (item.type === "image") {
+        await downloadImage(item.url, filename);
+      } else {
+        await downloadVideo(item.url, filename);
+      }
+    } catch (error) {
+      console.error("Failed to download item:", error);
+      alert("Failed to download item. Please try again.");
+    }
   };
 
   return (
@@ -264,7 +237,7 @@ export const HistoryPage: React.FC = () => {
                           : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                       }`}
                     >
-                      All ({mockHistory.length})
+                      All ({generationItems.length})
                     </button>
                     <button
                       onClick={() => setFilterType("image")}
@@ -275,7 +248,7 @@ export const HistoryPage: React.FC = () => {
                       }`}
                     >
                       <Image size={16} className="mr-2" />
-                      Images ({mockHistory.filter(item => item.type === "image").length})
+                      Images ({generationItems.filter(item => item.type === "image").length})
                     </button>
                     <button
                       onClick={() => setFilterType("video")}
@@ -286,21 +259,12 @@ export const HistoryPage: React.FC = () => {
                       }`}
                     >
                       <Video size={16} className="mr-2" />
-                      Videos ({mockHistory.filter(item => item.type === "video").length})
+                      Videos ({generationItems.filter(item => item.type === "video").length})
                     </button>
                   </div>
                 </div>
 
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showFavoritesOnly}
-                    onChange={(e) => setShowFavoritesOnly(e.target.checked)}
-                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  <Star size={16} className="text-yellow-500" />
-                  <span className="text-sm text-gray-700">Favorites only</span>
-                </label>
+
               </div>
 
               {/* Sort Options */}
@@ -308,12 +272,11 @@ export const HistoryPage: React.FC = () => {
                 <Calendar size={20} className="text-gray-500" />
                 <select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "newest" | "oldest" | "popular")}
+                  onChange={(e) => setSortBy(e.target.value as "newest" | "oldest")}
                   className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="newest">Newest First</option>
                   <option value="oldest">Oldest First</option>
-                  <option value="popular">Most Downloaded</option>
                 </select>
               </div>
             </div>
@@ -323,14 +286,19 @@ export const HistoryPage: React.FC = () => {
         {/* Results Summary */}
         <div className="mb-6">
           <p className="text-sm text-gray-600">
-            Showing {filteredHistory.length} of {mockHistory.length} generations
+            Showing {filteredHistory.length} of {generationItems.length} generations
             {searchQuery && ` matching "${searchQuery}"`}
-            {showFavoritesOnly && " (favorites only)"}
           </p>
         </div>
 
         {/* History Grid */}
-        {filteredHistory.length === 0 ? (
+        {loading ? (
+          <div className="text-center py-16">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+            <h3 className="text-xl font-semibold text-gray-600 mb-2">Loading your history...</h3>
+            <p className="text-gray-500">Please wait while we fetch your generations</p>
+          </div>
+        ) : filteredHistory.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-gray-400 mb-4">
               {filterType === "all" ? (
@@ -372,25 +340,7 @@ export const HistoryPage: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  
-                  {/* Favorite Button */}
-                  <button
-                    onClick={() => toggleFavorite(item.id)}
-                    className="absolute top-2 right-2 p-2 rounded-full bg-white/80 hover:bg-white transition-colors"
-                  >
-                    <Star
-                      size={16}
-                      className={item.isFavorite ? "text-yellow-500 fill-current" : "text-gray-400"}
-                    />
-                  </button>
 
-                  {/* Download Count */}
-                  {item.downloadCount > 0 && (
-                    <div className="absolute bottom-2 left-2 flex items-center space-x-1 bg-black/70 text-white px-2 py-1 rounded text-xs">
-                      <Eye size={12} />
-                      <span>{item.downloadCount}</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Content Info */}
@@ -432,7 +382,7 @@ export const HistoryPage: React.FC = () => {
                       Download
                     </button>
                     <button
-                      onClick={() => handleDelete(item.id)}
+                      onClick={() => handleDelete(item)}
                       className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                     >
                       <Trash2 size={14} />

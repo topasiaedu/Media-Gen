@@ -52,7 +52,7 @@ export interface Database {
           model_used: string;
           type: "image" | "video";
           size: string | null;
-          guidance_scale: number | null;
+          guidance_scale?: number | null;
           language: string;
           status?: "pending" | "processing" | "completed" | "failed";
         };

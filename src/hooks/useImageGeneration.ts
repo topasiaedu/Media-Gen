@@ -3,7 +3,7 @@
  * Custom hook for image generation functionality with ModelArk API integration
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { imageApi } from "../api/imageApi";
 import type { GenerateImageParams, GeneratedImageResult } from "../api/imageApi";
 import { useAuth } from "./useAuth";
@@ -23,6 +23,7 @@ interface UseImageGenerationResult extends UseImageGenerationState {
   testConnection: (prompt: string) => Promise<void>;
   clearError: () => void;
   availableModels: string[];
+  loadingModels: boolean;
 }
 
 export const useImageGeneration = (): UseImageGenerationResult => {
@@ -34,6 +35,9 @@ export const useImageGeneration = (): UseImageGenerationResult => {
       message: ""
     }
   });
+
+  const [availableModels, setAvailableModels] = useState<string[]>(["seedream-3-0-t2i-250415"]);
+  const [loadingModels, setLoadingModels] = useState<boolean>(false);
 
   const { user } = useAuth();
   const { refreshUserImages } = useImage();
@@ -148,13 +152,30 @@ export const useImageGeneration = (): UseImageGenerationResult => {
     }));
   }, []);
 
-  const availableModels = imageApi.getAvailableModels();
+  // Load available models on component mount
+  useEffect(() => {
+    const loadModels = async () => {
+      setLoadingModels(true);
+      try {
+        const models = await imageApi.getAvailableModels();
+        setAvailableModels(models);
+      } catch (error) {
+        console.error("Failed to load models:", error);
+        // Keep the fallback model
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+
+    loadModels();
+  }, []);
 
   return {
     ...state,
     generateImage,
     testConnection,
     clearError,
-    availableModels
+    availableModels,
+    loadingModels
   };
 }; 
