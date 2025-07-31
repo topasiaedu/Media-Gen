@@ -1,10 +1,21 @@
 /**
  * Video Generation Page
- * Dedicated page for video generation workflow
+ * Dedicated page for video generation workflow with polling support
  */
 
-import React, { useState } from "react";
-import { Video, Upload, Download, Share2, RefreshCw, Play, Pause } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { Video, Upload, Download, RefreshCw, Play, Pause, Wand2, Sparkles, AlertCircle, X } from "lucide-react";
+import { useVideoGeneration } from "../hooks/useVideoGeneration";
+import { useAuth } from "../hooks/useAuth";
+
+interface VideoGeneration {
+  id: string;
+  prompt: string;
+  url: string;
+  duration: number;
+  aspectRatio: string;
+  timestamp: string;
+}
 
 /**
  * Video Generation Page Component
@@ -12,44 +23,69 @@ import { Video, Upload, Download, Share2, RefreshCw, Play, Pause } from "lucide-
  */
 export const VideoGenerationPage: React.FC = () => {
   const [prompt, setPrompt] = useState<string>("");
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
-  const [generationProgress, setGenerationProgress] = useState<number>(0);
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [generatedVideos, setGeneratedVideos] = useState<VideoGeneration[]>([]);
+  const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [videoSettings, setVideoSettings] = useState({
-    duration: 4,
-    aspectRatio: "16:9",
-    model: "seedance-1-0-lite-t2v"
+    duration: "5",
+    aspectRatio: "16:9"
   });
+  // Hooks
+  const { generateVideo, loading, error, progress, clearError } = useVideoGeneration();
+  const { user } = useAuth();
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Example prompts for inspiration
+  const examplePrompts = [
+    "A beautiful butterfly flying over a field of colorful flowers, slow motion, cinematic",
+    "Ocean waves crashing against rocks at sunset, dramatic lighting",
+    "A cute cat playing with a ball of yarn in a cozy living room",
+    "Abstract geometric patterns morphing and changing colors",
+    "A peaceful forest scene with sunlight filtering through trees"
+  ];
 
   /**
-   * Handle video generation (placeholder function)
+   * Handle video generation using the new hook
    */
   const handleGenerate = async (): Promise<void> => {
     if (!prompt.trim()) return;
+    if (!user) {
+      alert("Please log in to generate videos");
+      return;
+    }
     
-    setIsGenerating(true);
-    setGenerationProgress(0);
+    clearError();
     
-    // Simulate progress
-    const progressInterval = setInterval(() => {
-      setGenerationProgress((prev) => {
-        if (prev >= 90) {
-          clearInterval(progressInterval);
-          return 90;
-        }
-        return prev + 10;
-      });
-    }, 500);
-    
-    // Simulate API call
-    setTimeout(() => {
-      clearInterval(progressInterval);
-      setGenerationProgress(100);
-      setGeneratedVideo("https://www.w3schools.com/html/mov_bbb.mp4");
-      setIsGenerating(false);
-    }, 8000);
+    try {
+      const params = {
+        prompt: prompt.trim(),
+        duration: videoSettings.duration,
+        aspectRatio: videoSettings.aspectRatio,
+        image: uploadedImage || undefined
+      };
+
+      const result = await generateVideo(params);
+
+      if (result && result.video_url) {
+        // Replace current video with the new one (only show latest)
+        const newVideo: VideoGeneration = {
+          id: result.task_id,
+          prompt: prompt.trim(),
+          url: result.video_url,
+          duration: result.duration,
+          aspectRatio: result.aspectRatio,
+          timestamp: "Just now"
+        };
+        
+        setGeneratedVideos([newVideo]);
+        
+        // Clear the prompt after successful generation
+        setPrompt("");
+      }
+    } catch (error) {
+      console.error("Video generation failed:", error);
+    }
   };
 
   /**
@@ -58,18 +94,79 @@ export const VideoGenerationPage: React.FC = () => {
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const file = event.target.files?.[0];
     if (file) {
+      setUploadedImage(file);
+      
       const reader = new FileReader();
       reader.onload = (e) => {
-        setUploadedImage(e.target?.result as string);
+        setUploadedImagePreview(e.target?.result as string);
       };
       reader.readAsDataURL(file);
     }
   };
 
+  /**
+   * Remove uploaded image
+   */
+  const removeUploadedImage = (): void => {
+    setUploadedImage(null);
+    setUploadedImagePreview(null);
+  };
+
+  /**
+   * Copy prompt to clipboard
+   */
+  const copyPrompt = (promptText: string): void => {
+    navigator.clipboard.writeText(promptText);
+    setPrompt(promptText);
+  };
+
+  /**
+   * Handle video play/pause
+   */
+  const togglePlayPause = (): void => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play();
+      }
+      setIsPlaying(!isPlaying);
+    }
+  };
+
+  /**
+   * Handle video download
+   */
+  const handleDownloadVideo = async (videoUrl: string, promptText: string): Promise<void> => {
+    try {
+      const cleanPrompt = promptText.slice(0, 50).replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
+      const filename = `${cleanPrompt || 'generated'}_video_${Date.now()}.mp4`;
+      
+      const response = await fetch(videoUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error("Failed to download video:", error);
+      alert("Failed to download video. Please try again.");
+    }
+  };
+
   const aspectRatioOptions = [
+    { label: "21:9 (Ultra-wide)", value: "21:9" },
     { label: "16:9 (Landscape)", value: "16:9" },
-    { label: "9:16 (Portrait)", value: "9:16" },
-    { label: "1:1 (Square)", value: "1:1" }
+    { label: "4:3 (Traditional)", value: "4:3" },
+    { label: "1:1 (Square)", value: "1:1" },
+    { label: "3:4 (Portrait)", value: "3:4" },
+    { label: "9:16 (Vertical)", value: "9:16" },
+    { label: "9:21 (Ultra-tall)", value: "9:21" },
+    { label: "Adaptive (Auto-detect from image)", value: "adaptive" }
   ];
 
   return (
@@ -84,12 +181,38 @@ export const VideoGenerationPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Error Display */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center">
+            <AlertCircle className="text-red-500 mr-3" size={20} />
+            <div>
+              <p className="text-red-800 font-medium">Generation Failed</p>
+              <p className="text-red-600 text-sm">{error}</p>
+            </div>
+            <button
+              onClick={clearError}
+              className="ml-auto text-red-500 hover:text-red-700"
+            >
+              <X size={20} />
+            </button>
+          </div>
+        )}
+
+        {/* Authentication Warning */}
+        {!user && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-yellow-800">
+              Please log in to generate videos with AI.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Input Panel */}
-          <div className="space-y-6">
-            <div className="card">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-                <Video className="mr-2" size={20} />
+                <Wand2 className="mr-2" size={20} />
                 Video Prompt
               </h2>
               
@@ -102,35 +225,36 @@ export const VideoGenerationPage: React.FC = () => {
                     id="video-prompt"
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
-                    className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="A beautiful butterfly flying over a field of flowers, slow motion, cinematic..."
+                    disabled={loading}
                   />
                 </div>
 
                 {/* Image Upload */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Starting Image (Optional)
+                    Starting Image (Optional for Image-to-Video)
                   </label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-primary-400 transition-colors">
-                    {uploadedImage ? (
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+                    {uploadedImagePreview ? (
                       <div className="relative">
                         <img
-                          src={uploadedImage}
-                          alt="Uploaded"
+                          src={uploadedImagePreview}
+                          alt="Starting frame for video"
                           className="max-h-32 mx-auto rounded"
                         />
                         <button
-                          onClick={() => setUploadedImage(null)}
-                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm"
+                          onClick={removeUploadedImage}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm hover:bg-red-600"
                         >
-                          ×
+                          <X size={14} />
                         </button>
                       </div>
                     ) : (
                       <div>
                         <Upload className="mx-auto mb-2 text-gray-400" size={32} />
-                        <p className="text-gray-600 mb-2">Click to upload an image</p>
+                        <p className="text-gray-600 mb-2">Upload an image to create image-to-video</p>
                         <input
                           type="file"
                           accept="image/*"
@@ -140,7 +264,7 @@ export const VideoGenerationPage: React.FC = () => {
                         />
                         <label
                           htmlFor="image-upload"
-                          className="btn-secondary cursor-pointer inline-block"
+                          className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg cursor-pointer inline-block transition-colors"
                         >
                           Choose Image
                         </label>
@@ -149,47 +273,63 @@ export const VideoGenerationPage: React.FC = () => {
                   </div>
                 </div>
 
+
+
                 <button
                   onClick={handleGenerate}
-                  disabled={!prompt.trim() || isGenerating}
-                  className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                  disabled={!prompt.trim() || loading || !user}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors flex items-center justify-center"
                 >
-                  {isGenerating ? (
+                  {loading ? (
                     <>
                       <RefreshCw className="animate-spin mr-2" size={20} />
-                      Generating... {generationProgress}%
+                      {progress.message || "Generating..."}
                     </>
                   ) : (
                     <>
-                      <Video className="mr-2" size={20} />
+                      <Sparkles className="mr-2" size={20} />
                       Generate Video
                     </>
                   )}
                 </button>
+
+
+              </div>
+            </div>
+
+            {/* Example Prompts */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Example Prompts</h3>
+              <div className="grid grid-cols-1 gap-2">
+                {examplePrompts.map((examplePrompt, index) => (
+                  <button
+                    key={index}
+                    onClick={() => copyPrompt(examplePrompt)}
+                    className="text-left p-3 bg-gray-50 hover:bg-gray-100 rounded-lg text-sm text-gray-700 transition-colors"
+                  >
+                    "{examplePrompt}"
+                  </button>
+                ))}
               </div>
             </div>
 
             {/* Settings Panel */}
-            <div className="card">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Video Settings</h3>
               
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Duration: {videoSettings.duration} seconds
+                    Duration
                   </label>
-                  <input
-                    type="range"
-                    min="2"
-                    max="10"
+                  <select
                     value={videoSettings.duration}
-                    onChange={(e) => setVideoSettings({...videoSettings, duration: parseInt(e.target.value)})}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>2s</span>
-                    <span>10s</span>
-                  </div>
+                    onChange={(e) => setVideoSettings({...videoSettings, duration: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="5">5 seconds</option>
+                    <option value="10">10 seconds</option>
+                  </select>
                 </div>
 
                 <div>
@@ -199,7 +339,7 @@ export const VideoGenerationPage: React.FC = () => {
                   <select
                     value={videoSettings.aspectRatio}
                     onChange={(e) => setVideoSettings({...videoSettings, aspectRatio: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     {aspectRatioOptions.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -209,80 +349,73 @@ export const VideoGenerationPage: React.FC = () => {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Model
-                  </label>
-                  <select
-                    value={videoSettings.model}
-                    onChange={(e) => setVideoSettings({...videoSettings, model: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  >
-                    <option value="seedance-1-0-lite-t2v">Seedance Text-to-Video</option>
-                    <option value="runway-gen-2">Runway Gen-2</option>
-                    <option value="stable-video">Stable Video Diffusion</option>
-                  </select>
-                </div>
+
               </div>
             </div>
           </div>
 
-          {/* Preview Panel */}
-          <div className="card">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Generated Video</h2>
-            
-            <div className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center mb-4 relative">
-              {isGenerating ? (
-                <div className="text-center">
-                  <RefreshCw className="animate-spin mx-auto mb-4 text-primary-600" size={48} />
-                  <p className="text-gray-600 mb-2">Generating your video...</p>
-                  <div className="w-64 bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${generationProgress}%` }}
-                    ></div>
+          {/* Right Sidebar */}
+          <div className="space-y-6">
+            {/* Generated Video Preview */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">Generated Video</h2>
+              
+              {generatedVideos.length > 0 ? (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="aspect-video relative">
+                    <video
+                      ref={videoRef}
+                      src={generatedVideos[0].url}
+                      className="w-full h-full object-cover"
+                      controls
+                      muted
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                    />
+                  </div>
+                  <div className="p-3">
+                    {generatedVideos[0].prompt && (
+                      <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                        {generatedVideos[0].prompt}
+                      </p>
+                    )}
+                    <div className="flex space-x-2">
+                      <button 
+                        onClick={() => handleDownloadVideo(generatedVideos[0].url, generatedVideos[0].prompt)}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded-lg flex items-center justify-center"
+                      >
+                        <Download className="mr-1" size={14} />
+                        Download
+                      </button>
+                      <button 
+                        onClick={togglePlayPause}
+                        className="flex-1 bg-gray-600 hover:bg-gray-700 text-white text-sm py-2 px-3 rounded-lg flex items-center justify-center"
+                      >
+                        {isPlaying ? <Pause className="mr-1" size={14} /> : <Play className="mr-1" size={14} />}
+                        {isPlaying ? 'Pause' : 'Play'}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              ) : generatedVideo ? (
-                <div className="w-full h-full relative">
-                  <video
-                    src={generatedVideo}
-                    className="w-full h-full object-cover rounded-lg"
-                    controls={false}
-                    autoPlay={false}
-                    muted
-                  />
-                  <button
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20 hover:bg-opacity-30 transition-colors"
-                  >
-                    {isPlaying ? (
-                      <Pause className="text-white" size={48} />
-                    ) : (
-                      <Play className="text-white" size={48} />
-                    )}
-                  </button>
-                </div>
               ) : (
-                <div className="text-center text-gray-500">
-                  <Video size={64} className="mx-auto mb-4 opacity-20" />
-                  <p>Your generated video will appear here</p>
+                <div className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center border border-gray-200">
+                  {loading ? (
+                    <div className="text-center">
+                      <RefreshCw className="animate-spin mx-auto mb-4 text-blue-600" size={48} />
+                      <p className="text-gray-600 mb-2">{progress.message || "Generating your video..."}</p>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Video generation can take 2-10 minutes
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center text-gray-500">
+                      <Video size={64} className="mx-auto mb-4 opacity-20" />
+                      <p>Your generated video will appear here</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-
-            {generatedVideo && !isGenerating && (
-              <div className="flex space-x-3">
-                <button className="flex-1 btn-primary flex items-center justify-center">
-                  <Download className="mr-2" size={16} />
-                  Download
-                </button>
-                <button className="flex-1 btn-secondary flex items-center justify-center">
-                  <Share2 className="mr-2" size={16} />
-                  Share
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>
