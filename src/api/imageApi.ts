@@ -48,7 +48,8 @@ const generateImage = async (params: GenerateImageParams): Promise<GeneratedImag
         prompt,
         model,
         size,
-        userId
+        userId,
+        watermark: false
       })
     });
 

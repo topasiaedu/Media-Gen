@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Image, Download, RefreshCw, Wand2, Copy, Heart, Sparkles, AlertCircle } from "lucide-react";
+import { Image, Download, RefreshCw, Wand2, Copy, Sparkles, AlertCircle, Eye } from "lucide-react";
 import { useImageGeneration } from "../hooks/useImageGeneration";
 import { useImage } from "../contexts/ImageContext";
 import { useAuth } from "../hooks/useAuth";
+import { PreviewModal, PreviewItem } from "../components/PreviewModal";
 
 interface ImageGeneration {
   id: string;
@@ -20,10 +21,12 @@ interface ImageGeneration {
 export const ImageGenerationPage: React.FC = () => {
   const [prompt, setPrompt] = useState<string>("");
   const [generatedImages, setGeneratedImages] = useState<ImageGeneration[]>([]);
+  const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
+  const [previewItem, setPreviewItem] = useState<PreviewItem | null>(null);
 
   // Hooks
-  const { generateImage, loading, error, progress, clearError, availableModels } = useImageGeneration();
-  const { images, getRecentImages, downloadImage } = useImage();
+  const { generateImage, loading, error, progress, clearError } = useImageGeneration();
+  const { getRecentImages, downloadImage } = useImage();
   const { user } = useAuth();
 
   // Load most recent image on component mount
@@ -122,6 +125,39 @@ export const ImageGenerationPage: React.FC = () => {
       console.error("Download failed:", error);
       alert("Failed to download image. Please try again.");
     }
+  };
+
+  /**
+   * Open preview modal for an image
+   */
+  const openPreview = (image: ImageGeneration): void => {
+    const previewData: PreviewItem = {
+      id: image.id,
+      type: "image",
+      url: image.bucketUrl || image.url,
+      prompt: image.prompt || "Generated image",
+      createdAt: image.timestamp,
+      settings: {
+        size: image.size
+      }
+    };
+    setPreviewItem(previewData);
+    setIsPreviewOpen(true);
+  };
+
+  /**
+   * Close preview modal
+   */
+  const closePreview = (): void => {
+    setIsPreviewOpen(false);
+    setPreviewItem(null);
+  };
+
+  /**
+   * Handle download from preview modal
+   */
+  const handlePreviewDownload = (item: PreviewItem): void => {
+    handleDownloadImage(item.url, item.prompt);
   };
 
   return (
@@ -235,31 +271,52 @@ export const ImageGenerationPage: React.FC = () => {
               
               {generatedImages.length > 0 ? (
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <img
-                    src={generatedImages[0].bucketUrl || generatedImages[0].url}
-                    alt={generatedImages[0].prompt || "Generated image"}
-                    className="w-full aspect-square object-cover"
-                    onError={(e) => {
-                      // Fallback to original URL if bucket URL fails
-                      const target = e.target as HTMLImageElement;
-                      if (target.src !== generatedImages[0].url) {
-                        target.src = generatedImages[0].url;
-                      }
-                    }}
-                  />
+                  <div className="relative group">
+                    <img
+                      src={generatedImages[0].bucketUrl || generatedImages[0].url}
+                      alt={generatedImages[0].prompt || "Generated image"}
+                      className="w-full aspect-square object-cover"
+                      onError={(e) => {
+                        // Fallback to original URL if bucket URL fails
+                        const target = e.target as HTMLImageElement;
+                        if (target.src !== generatedImages[0].url) {
+                          target.src = generatedImages[0].url;
+                        }
+                      }}
+                    />
+                    {/* Preview overlay */}
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center">
+                      <button
+                        onClick={() => openPreview(generatedImages[0])}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white text-gray-800 p-2 rounded-full hover:bg-gray-100"
+                        title="Preview Image"
+                      >
+                        <Eye size={20} />
+                      </button>
+                    </div>
+                  </div>
                   <div className="p-3">
                     {generatedImages[0].prompt && (
-                      <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                      <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                         {generatedImages[0].prompt}
                       </p>
                     )}
-                    <button 
-                      onClick={() => handleDownloadImage(generatedImages[0].bucketUrl || generatedImages[0].url, generatedImages[0].prompt || 'generated-image')}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded-lg flex items-center justify-center"
-                    >
-                      <Download className="mr-1" size={14} />
-                      Download
-                    </button>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => openPreview(generatedImages[0])}
+                        className="flex-1 btn-secondary text-sm flex items-center justify-center"
+                      >
+                        <Eye className="mr-1" size={14} />
+                        Preview
+                      </button>
+                      <button 
+                        onClick={() => handleDownloadImage(generatedImages[0].bucketUrl || generatedImages[0].url, generatedImages[0].prompt || 'generated-image')}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded-lg flex items-center justify-center"
+                      >
+                        <Download className="mr-1" size={14} />
+                        Download
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -276,6 +333,14 @@ export const ImageGenerationPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Preview Modal */}
+      <PreviewModal
+        isOpen={isPreviewOpen}
+        onClose={closePreview}
+        item={previewItem}
+        onDownload={handlePreviewDownload}
+      />
     </div>
   );
 }; 

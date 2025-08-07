@@ -4,12 +4,12 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Image, Video, Download, Trash2, Calendar, Filter, Search } from "lucide-react";
+import { Image, Video, Download, Trash2, Calendar, Filter, Search, Eye } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useImage } from "../contexts/ImageContext";
 import { useVideo } from "../contexts/VideoContext";
 import { usePrompt } from "../contexts/PromptContext";
-import type { Image as ImageType, Video as VideoType, Prompt } from "../database.types";
+import { PreviewModal, PreviewItem } from "../components/PreviewModal";
 
 interface GenerationItem {
   id: string;
@@ -36,12 +36,14 @@ export const HistoryPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [generationItems, setGenerationItems] = useState<GenerationItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
+  const [previewItem, setPreviewItem] = useState<PreviewItem | null>(null);
   
   // Hooks
   const { user } = useAuth();
-  const { images, getUserImages, deleteImage, downloadImage } = useImage();
-  const { videos, getUserVideos, deleteVideo, downloadVideo } = useVideo();
-  const { prompts, getUserPrompts } = usePrompt();
+  const { getUserImages, deleteImage, downloadImage } = useImage();
+  const { getUserVideos, deleteVideo, downloadVideo } = useVideo();
+  const { getUserPrompts } = usePrompt();
 
   // Load user's generation history
   useEffect(() => {
@@ -196,6 +198,51 @@ export const HistoryPage: React.FC = () => {
     }
   };
 
+  /**
+   * Open preview modal for an item
+   */
+  const openPreview = (item: GenerationItem): void => {
+    const previewData: PreviewItem = {
+      id: item.id,
+      type: item.type,
+      url: item.url,
+      prompt: item.prompt,
+      createdAt: item.createdAt,
+      settings: item.settings
+    };
+    setPreviewItem(previewData);
+    setIsPreviewOpen(true);
+  };
+
+  /**
+   * Close preview modal
+   */
+  const closePreview = (): void => {
+    setIsPreviewOpen(false);
+    setPreviewItem(null);
+  };
+
+  /**
+   * Handle download from preview modal
+   */
+  const handlePreviewDownload = (item: PreviewItem): void => {
+    const generationItem: GenerationItem = {
+      id: item.id,
+      type: item.type,
+      url: item.url,
+      prompt: item.prompt,
+      createdAt: item.createdAt || new Date().toISOString(),
+      settings: {
+        model: item.settings?.model || "unknown",
+        size: item.settings?.size,
+        duration: item.settings?.duration,
+        aspectRatio: item.settings?.aspectRatio
+      },
+      promptId: "" // Not needed for download
+    };
+    handleDownload(generationItem);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -321,15 +368,16 @@ export const HistoryPage: React.FC = () => {
             {filteredHistory.map((item) => (
               <div key={item.id} className="card hover:shadow-xl transition-shadow duration-300 group">
                 {/* Media Preview */}
-                <div className="aspect-square bg-gray-100 rounded-lg mb-4 overflow-hidden relative">
+                <div className="aspect-square bg-gray-100 rounded-lg mb-4 overflow-hidden relative group">
                   {item.type === "image" ? (
                     <img
                       src={item.url}
                       alt="Generated content"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover cursor-pointer"
+                      onClick={() => openPreview(item)}
                     />
                   ) : (
-                    <div className="relative w-full h-full">
+                    <div className="relative w-full h-full cursor-pointer" onClick={() => openPreview(item)}>
                       <video
                         src={item.url}
                         className="w-full h-full object-cover"
@@ -340,7 +388,17 @@ export const HistoryPage: React.FC = () => {
                       </div>
                     </div>
                   )}
-
+                  
+                  {/* Preview overlay */}
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 flex items-center justify-center">
+                    <button
+                      onClick={() => openPreview(item)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white text-gray-800 p-2 rounded-full hover:bg-gray-100"
+                      title={`Preview ${item.type}`}
+                    >
+                      <Eye size={20} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Content Info */}
@@ -375,8 +433,15 @@ export const HistoryPage: React.FC = () => {
                   {/* Actions */}
                   <div className="flex space-x-2 pt-2">
                     <button
-                      onClick={() => handleDownload(item)}
+                      onClick={() => openPreview(item)}
                       className="flex-1 btn-secondary text-sm flex items-center justify-center"
+                    >
+                      <Eye size={14} className="mr-1" />
+                      Preview
+                    </button>
+                    <button
+                      onClick={() => handleDownload(item)}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded-lg flex items-center justify-center transition-colors"
                     >
                       <Download size={14} className="mr-1" />
                       Download
@@ -394,6 +459,14 @@ export const HistoryPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Preview Modal */}
+      <PreviewModal
+        isOpen={isPreviewOpen}
+        onClose={closePreview}
+        item={previewItem}
+        onDownload={handlePreviewDownload}
+      />
     </div>
   );
 }; 
